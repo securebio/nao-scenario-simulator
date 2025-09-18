@@ -57,11 +57,20 @@ simulation_params = dict(
         2.65, # Triturators
         2.40, # Individual Planes
     ],
+    genome_length_bp=13_000,
+    insert_length_bp=170,
     min_sample_observations=2,
     min_read_observations=2,
     fraction_useful_reads=0.50,
-    simulations=100000,
+    coverage_proportion=None,
+    simulations=1000,
 )
+
+REQUIRE_COVERAGE=True
+
+if REQUIRE_COVERAGE:
+    simulation_params["fraction_useful_reads"] = 1
+    simulation_params["coverage_proportion"] = 0.8
 
 # Beyond a 30% infection rate an exponential model gets very inaccurate.
 MAX_SUPPORTED_CUMULATIVE_INCIDENCE = 0.3
@@ -170,6 +179,7 @@ class BiosurveillanceSimulator:
         # Detection tracking
         sample_observations = 0
         read_observations = 0
+        observed_positions = set()
 
         # Initialize sites
         site_infos = []
@@ -249,11 +259,33 @@ class BiosurveillanceSimulator:
                             sample_observations += 1
                             read_observations += this_sample_obs
 
-                        if (sample_observations >=
-                            self.params['min_sample_observations'] and
-                            read_observations >=
-                            self.params['min_read_observations']):
-                            return cumulative_incidence * processing_delay_factor
+                            if self.params["coverage_proportion"] is not None:
+                                for _ in range(this_sample_obs):
+                                    read_start = np.random.randint(
+                                        self.params["genome_length_bp"] -
+                                        self.params["insert_length_bp"])
+
+                                    for i in range(
+                                            read_start,
+                                            read_start +
+                                            self.params["insert_length_bp"]):
+                                        observed_positions.add(i)
+
+                        if (sample_observations <
+                            self.params['min_sample_observations']):
+                            continue
+
+                        if self.params["coverage_proportion"] is None:
+                            if (read_observations <
+                                self.params['min_read_observations']):
+                                continue
+                        else:
+                            if (len(observed_positions) /
+                                    self.params["genome_length_bp"] <
+                                self.params["coverage_proportion"]):
+                                continue
+
+                        return cumulative_incidence * processing_delay_factor
 
             # Check for simulation termination
             if cumulative_incidence > MAX_SUPPORTED_CUMULATIVE_INCIDENCE or \
