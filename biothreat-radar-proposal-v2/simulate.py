@@ -59,9 +59,20 @@ simulation_params = dict(
     ],
     min_sample_observations=2,
     min_read_observations=2,
+    genome_length_bp=13000,
+    insert_length_bp=170,
     fraction_useful_reads=0.50,
     simulations=100000,
 )
+
+REQUIRE_2X_COVERAGE=True
+if REQUIRE_2X_COVERAGE:
+    required_mean_coverage = 2
+    simulation_params["min_read_observations"] = (
+        simulation_params["genome_length_bp"] /
+        simulation_params["insert_length_bp"] *
+        required_mean_coverage)
+    simulation_params["fraction_useful_reads"] = 1
 
 # Beyond a 30% infection rate an exponential model gets very inaccurate.
 MAX_SUPPORTED_CUMULATIVE_INCIDENCE = 0.3
