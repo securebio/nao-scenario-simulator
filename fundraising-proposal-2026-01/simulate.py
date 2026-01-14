@@ -72,7 +72,7 @@ elif scenario == "proposal-3d":
     # Keep modeling Flu A
     simulation_params["shedding_values"].append("MU-11320")
     # 16 sites, averaging 1M people each
-    simulation_params["sample_populations"].append(8e6)
+    simulation_params["sample_populations"].append(16e6)
     # Now two 10B flow cells
     simulation_params["sample_depths"].append(10e9 * 2)
     # Proposal includes even more improvement in e2e time
