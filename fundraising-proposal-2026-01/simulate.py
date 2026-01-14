@@ -1,16 +1,25 @@
 #!/usr/bin/env python3
 """
-This is a simplified port of the HTML+JS simulator to Python, to support the
-NAO's proposal for how Biothreat Radar could be implemented.
+This is a simplified port of the HTML+JS simulator to Python, to support a
+2026-01 NAO fundraising proposal.
 
-The key improvement over the main simulator is that it supports combining
-multiple systems into a single overall efficacy estimate.
+It's derived from the code behind
+https://naobservatory.org/blog/biothreat_radar/ and then further simplified.
 """
 
 import os
+import sys
 import json
 import numpy as np
 from typing import List, Dict, Optional, Tuple
+
+SCENARIOS = [
+    "casper-today-full",
+    "proposal-5d",
+    "proposal-3d",
+]
+scenario, = sys.argv[1:]
+assert scenario in SCENARIOS
 
 # Load the simulator's RAi(1%) distributions.
 with open(os.path.dirname(__file__) + "/../html/ww-rai1pct.js") as inf:
@@ -21,49 +30,57 @@ with open(os.path.dirname(__file__) + "/../html/ww-rai1pct.js") as inf:
 simulation_params = dict(
     doubling_time=3.0,
     cv_doubling_time=0.1,
-    shedding_values=[
-        "MU-11320", # NWSS
-        [
-            # Swabs
-            5e-6, 5e-6, 6e-6, 7e-6, 1e-5, 1e-5, 2e-5, 3e-5, 3e-5, 3e-5, 4e-5,
-            3e-4, 3e-4, 3e-4, 3e-4, 5e-4, 6e-4, 1e-3, 4e-3, 9e-3, 1e-2, 1e-2,
-            2e-2, 3e-2, 4e-2, 5e-2, 5e-2, 6e-2, 2e-1, 2e-1, 3e-1, 3e-1, 4e-1,
-            6e-1, 6e-1, 7e-1, 2e-7, 9e-7, 2e-5, 1e-5, 1e-5, 7e-5, 5e-5, 1e-2,
-            6e-6, 2e-5, 9e-5, 6e-4, 3e-4, 4e-6, 2e-3, 3e-2, 6e-5, 3e-4, 8e-2,
-            2e-4, 2e-4, 2e-4, 1e-6, 3e-5, 2e-4, 1e-5, 3e-5, 1e-3,
-        ],
-        [1.4e-6], # Triturators
-        [1.4e-6], # Inidividual Planes
-    ],
-    sample_populations = [
-        500000, # NWSS
-        5200,   # Swabs
-        97500,  # Triturators
-        4500,   # Individual Planes
-    ],
+    shedding_values=["MU-11320"], # Flu A in Wastewater
+    sample_populations=[20e6],
     # How deeply do we sequence samples from each source, on a daily basis?
-    sample_depths = [
-        24e9,   # NWSS
-        2e9,    # Swabs
-        188e9,  # Triturators
-        12e9,   # Individual Planes
-    ],
+    sample_depths=[28e9], # One flow cell at MU
+    processing_delays=[14],
+    cadences=[1/7],
     sigma_shedding_values=0.05,
     shedding_duration=5.0,
     sigma_shedding_duration=0.05,
-    processing_delays=[
-        2.69, # NWSS
-        2.19, # Swabs
-        2.65, # Triturators
-        2.40, # Individual Planes
-    ],
     min_sample_observations=2,
     min_read_observations=2,
     genome_length_bp=13000,
     insert_length_bp=170,
     fraction_useful_reads=0.50,
-    simulations=100000,
+    simulations=100_000,
 )
+
+if scenario == "casper-today-full":
+    # Keep modeling Flu A
+    simulation_params["shedding_values"].append("MU-11320")
+    # Boston x2 and South Florida
+    simulation_params["sample_populations"].append(3e6)
+    # One 25B lane at BCL
+    simulation_params["sample_depths"].append(3e9)
+    # Still 14d
+    simulation_params["processing_delays"].append(14)
+    simulation_params["cadences"].append(1/7)
+elif scenario == "proposal-5d":
+    # Keep modeling Flu A
+    simulation_params["shedding_values"].append("MU-11320")
+    # 8 sites, averaging 1M people each
+    simulation_params["sample_populations"].append(8e6)
+    # Switching NAO sequencing to 10B flow cell
+    simulation_params["sample_depths"].append(10e9)
+    # Proposal includes substantial improvement in e2e time
+    simulation_params["processing_delays"].append(5)
+    # NAO goes to twice a week
+    simulation_params["cadences"].append(2/7)
+elif scenario == "proposal-3d":
+    # Keep modeling Flu A
+    simulation_params["shedding_values"].append("MU-11320")
+    # 16 sites, averaging 1M people each
+    simulation_params["sample_populations"].append(8e6)
+    # Now two 10B flow cells
+    simulation_params["sample_depths"].append(10e9 * 2)
+    # Proposal includes even more improvement in e2e time
+    simulation_params["processing_delays"].append(3)
+    # NAO goes to 5x weekly
+    simulation_params["cadences"].append(5/7)
+else:
+    assert False
 
 REQUIRE_2X_COVERAGE=True
 if REQUIRE_2X_COVERAGE:
@@ -140,7 +157,9 @@ class BiosurveillanceSimulator:
 
     def simulate_one(self) -> float:
         """Run one simulation and return cumulative incidence at detection"""
+        # Which day of the simulation are we on?
         day = 0
+
         population = 1e10
 
         # Growth parameters with noise
@@ -189,6 +208,9 @@ class BiosurveillanceSimulator:
                 'sample_sick': 0,
                 'sample_total': 0,
                 'sample_weekly_incidences': [],
+                # What fraction of the days have we sequenced so far?  (Used to support
+                # cadence)
+                'days_sequenced': 0,
             })
 
         # Processing delay factor
@@ -207,6 +229,7 @@ class BiosurveillanceSimulator:
                  rai1pct,
                  sample_depth,
                  processing_delay_factor,
+                 cadence,
                  ) in zip(
                      site_infos,
                      self.params['sample_populations'],
@@ -214,10 +237,13 @@ class BiosurveillanceSimulator:
                      rai1pcts,
                      self.params['sample_depths'],
                      processing_delay_factors,
+                     self.params['cadences'],
                  ):
 
+                should_sample_and_sequence = site["days_sequenced"] / day < cadence
+
                 # Sampling
-                if True:
+                if should_sample_and_sequence:
                     daily_incidence = cumulative_incidence * r
                     prob_sick = self.individual_probability_sick(
                         daily_incidence, detectable_days, growth_factor
@@ -232,7 +258,8 @@ class BiosurveillanceSimulator:
                     )
 
                 # Sequencing
-                if True:
+                if should_sample_and_sequence:
+                    site["days_sequenced"] += 1
                     relative_abundance = 0
                     if ra_sicks is not None:
                         relative_abundance = (
