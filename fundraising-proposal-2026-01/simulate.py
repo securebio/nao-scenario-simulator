@@ -50,7 +50,7 @@ simulation_params = dict(
 if scenario == "casper-today-full":
     # Keep modeling Flu A
     simulation_params["shedding_values"].append("MU-11320")
-    # Boston x2 and South Florida
+    # Boston x2 and South Florida.  What SB is currently sequencing at BCL.
     simulation_params["sample_populations"].append(3e6)
     # One 25B lane at BCL
     simulation_params["sample_depths"].append(3e9)
